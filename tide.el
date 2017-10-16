@@ -1523,10 +1523,12 @@ code-analysis."
   ;; `buffer-file-name' will be empty for indirect buffers, so we'll use the
   ;; name of the parrent buffer instead. This probably breaks when there are
   ;; multiple indirect buffers.
-  (setq tide-buffer-file-name (or buffer-file-name
-                                  (buffer-file-name (buffer-base-buffer))
-                                  (and edit-indirect--overlay
-                                       (buffer-file-name (overlay-buffer edit-indirect--overlay))))
+  (setq tide-buffer-file-name (or (and (overlayp edit-indirect--overlay)
+                                       (buffer-file-name (overlay-buffer edit-indirect--overlay)))
+                                  (and (overlayp org-src--overlay)
+                                       (buffer-file-name (overlay-buffer org-src--overlay)))
+                                  buffer-file-name
+                                  (buffer-file-name (buffer-base-buffer)))
         tide-active-buffer-file-name tide-buffer-file-name)
 
   (tide-command:openfile)
@@ -1571,7 +1573,7 @@ code-analysis."
        (tide-on-response-success response nil
          (when (string-prefix-p "/dev/null/inferredProject"
                                 (tide-plist-get response :body :configFileName))
-           (message (format "'%s' is not part of a project, at it to the files array in tsconfig.json"
+           (message (format "'%s' is not part of a project, add it to the files array in tsconfig.json"
                             tide-buffer-file-name))))))))
 
 ;;;###autoload
