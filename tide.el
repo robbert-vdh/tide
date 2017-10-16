@@ -170,13 +170,12 @@ above."
 (tide-def-permanent-buffer-local tide-buffer-dirty nil)
 (tide-def-permanent-buffer-local tide-buffer-tmp-file nil)
 (tide-def-permanent-buffer-local tide-active-buffer-file-name nil)
-(tide-def-permanent-buffer-local tide-buffer-file-name nil)
 (tide-def-permanent-buffer-local tide-require-manual-sync nil)
 
 (defvar tide-servers (make-hash-table :test 'equal))
 (defvar tide-response-callbacks (make-hash-table :test 'equal))
 
-(defvar tide-source-root-directory (file-name-directory (or load-file-name tide-buffer-file-name)))
+(defvar tide-source-root-directory (file-name-directory (or load-file-name (tide-buffer-file-name))))
 (defvar tide-tsserver-directory (expand-file-name "tsserver" tide-source-root-directory))
 
 (defun tide-project-root ()
@@ -195,6 +194,17 @@ above."
 (defun tide-project-name ()
   (let ((full-path (directory-file-name (tide-project-root))))
     (concat (file-name-nondirectory full-path) "-" (substring (md5 full-path) 0 10))))
+
+(defun tide-buffer-file-name ()
+  "Returns either the path to the currently open file. This is
+  needed to support indirect buffers, as they don't set
+  `buffer-file-name' correctly."
+  (or (and (overlayp edit-indirect--overlay)
+           (buffer-file-name (overlay-buffer edit-indirect--overlay)))
+      (and (overlayp org-src--overlay)
+           (buffer-file-name (overlay-buffer org-src--overlay)))
+      buffer-file-name
+      (buffer-file-name (buffer-base-buffer))))
 
 ;;; Compatibility
 
@@ -615,39 +625,39 @@ If TIDE-TSSERVER-EXECUTABLE is set by the user use it.  Otherwise check in the n
     (_ standard-indent)))
 
 (defun tide-command:configure ()
-  (tide-send-command "configure" `(:hostInfo ,(emacs-version) :file ,tide-buffer-file-name :formatOptions ,(tide-file-format-options))))
+  (tide-send-command "configure" `(:hostInfo ,(emacs-version) :file ,(tide-buffer-file-name) :formatOptions ,(tide-file-format-options))))
 
 (defun tide-command:projectInfo (cb &optional need-file-name-list)
-  (tide-send-command "projectInfo" `(:file ,tide-buffer-file-name :needFileNameList ,need-file-name-list) cb))
+  (tide-send-command "projectInfo" `(:file ,(tide-buffer-file-name) :needFileNameList ,need-file-name-list) cb))
 
 (defun tide-command:openfile ()
   (tide-send-command "open"
                      (if tide-require-manual-sync
                          `(:file
-                           ,tide-buffer-file-name
+                           ,(tide-buffer-file-name)
                            ;; TODO: Set this according to a variable or an alist
                            :scriptKindName "TS"
                            :fileContent ,(buffer-string))
-                       (append `(:file ,tide-buffer-file-name)
-                               (let ((extension (upcase (file-name-extension tide-buffer-file-name))))
+                       (append `(:file ,(tide-buffer-file-name))
+                               (let ((extension (upcase (file-name-extension (tide-buffer-file-name)))))
                                  (when (member extension '("TS" "JS" "TSX" "JSX"))
                                    `(:scriptKindName ,extension)))))))
 
 (defun tide-command:closefile ()
-  (tide-send-command "close" `(:file ,tide-buffer-file-name)))
+  (tide-send-command "close" `(:file ,(tide-buffer-file-name))))
 
 ;;; Jump to definition
 
 (defun tide-command:definition (cb)
   (tide-send-command
    "definition"
-   `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
+   `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
    cb))
 
 (defun tide-command:typeDefinition (cb)
   (tide-send-command
    "typeDefinition"
-   `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
+   `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
    cb))
 
 (defun tide-jump-to-definition (&optional arg)
@@ -672,7 +682,7 @@ implementations.  When invoked with a prefix arg, jump to the type definition."
 (defun tide-filespan-is-current-location-p (filespan)
   (let* ((location (plist-get filespan :start))
          (new-file-name (plist-get filespan :file)))
-    (and (string-equal new-file-name tide-buffer-file-name)
+    (and (string-equal new-file-name (tide-buffer-file-name))
          (equal (tide-location-to-point location) (point)))))
 
 (defun tide-move-to-location (location)
@@ -703,7 +713,7 @@ implementations.  When invoked with a prefix arg, jump to the type definition."
 ;;; Jump to implementation
 
 (defun tide-command:implementation ()
-  (tide-send-command-sync "implementation" `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
+  (tide-send-command-sync "implementation" `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
 
 (defun tide-jump-to-implementation-format-item (item)
   (let* ((file-name (plist-get item :file))
@@ -776,7 +786,7 @@ Noise can be anything like braces, reserved keywords, etc."
         (tide-jump-to-filespan navto-item)))))
 
 (defun tide-command:navto (type)
-  (tide-send-command-sync "navto" `(:file ,tide-buffer-file-name :searchValue ,type :maxResultCount 100)))
+  (tide-send-command-sync "navto" `(:file ,(tide-buffer-file-name) :searchValue ,type :maxResultCount 100)))
 
 ;;; Eldoc
 
@@ -843,7 +853,7 @@ Noise can be anything like braces, reserved keywords, etc."
 (defun tide-command:signatureHelp (cb)
   (tide-send-command
    "signatureHelp"
-   `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
+   `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))
    (tide-on-response-success-callback response t
      (funcall cb (tide-annotate-signatures (plist-get response :body))))))
 
@@ -890,10 +900,10 @@ Noise can be anything like braces, reserved keywords, etc."
                    (list jsdoc))))))))
 
 (defun tide-command:quickinfo-old (cb)
-  (tide-send-command "quickinfo" `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset)) cb))
+  (tide-send-command "quickinfo" `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset)) cb))
 
 (defun tide-command:quickinfo-full (cb)
-  (tide-send-command "quickinfo-full" `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset)) cb))
+  (tide-send-command "quickinfo-full" `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset)) cb))
 
 (defun tide-command:quickinfo (cb)
   (tide-fallback-if-not-supported "quickinfo-full" tide-command:quickinfo-full tide-command:quickinfo-old cb))
@@ -938,7 +948,7 @@ Noise can be anything like braces, reserved keywords, etc."
     (setq tide-buffer-tmp-file nil)))
 
 (defun tide-command:reloadfile ()
-  (tide-send-command "reload" `(:file ,tide-buffer-file-name :tmpfile ,tide-buffer-file-name)))
+  (tide-send-command "reload" `(:file ,(tide-buffer-file-name) :tmpfile ,(tide-buffer-file-name))))
 
 (defun tide-handle-change (_beg _end _len)
   (setq tide-buffer-dirty t))
@@ -948,14 +958,14 @@ Noise can be anything like braces, reserved keywords, etc."
   ;; ways, one common example is the rename operation. Ensure that we
   ;; send the open command for the new file before using it as an
   ;; argument for any other command.
-  (unless (string-equal tide-active-buffer-file-name tide-buffer-file-name)
+  (unless (string-equal tide-active-buffer-file-name (tide-buffer-file-name))
     (tide-configure-buffer))
   (when tide-buffer-dirty
     (setq tide-buffer-dirty nil)
     (when (not tide-buffer-tmp-file)
       (setq tide-buffer-tmp-file (make-temp-file "tide")))
     (write-region (point-min) (point-max) tide-buffer-tmp-file nil 'no-message)
-    (tide-send-command "reload" `(:file ,tide-buffer-file-name :tmpfile ,tide-buffer-tmp-file))))
+    (tide-send-command "reload" `(:file ,(tide-buffer-file-name) :tmpfile ,tide-buffer-tmp-file))))
 
 ;;; Code-fixes
 
@@ -971,7 +981,7 @@ Noise can be anything like braces, reserved keywords, etc."
   (-map #'flycheck-error-id (flycheck-overlay-errors-at (point))))
 
 (defun tide-command:getCodeFixes ()
-  (tide-send-command-sync "getCodeFixes" `(:file ,(tide-buffer-file-name) :startLine ,(tide-line-number-at-pos) :startOffset ,(tide-current-offset) :endLine ,(tide-line-number-at-pos) :endOffset ,(+ 1 (tide-current-offset)) :errorCodes ,(tide-get-flycheck-errors-ids-at-point))))
+  (tide-send-command-sync "getCodeFixes" `(:file ,((tide-buffer-file-name)) :startLine ,(tide-line-number-at-pos) :startOffset ,(tide-current-offset) :endLine ,(tide-line-number-at-pos) :endOffset ,(+ 1 (tide-current-offset)) :errorCodes ,(tide-get-flycheck-errors-ids-at-point))))
 
 (defun tide-get-fix-description (fix)
   (plist-get fix :description))
@@ -1007,13 +1017,13 @@ Noise can be anything like braces, reserved keywords, etc."
 (defun tide-command:getEditsForRefactor (refactor action)
   (tide-send-command-sync
    "getEditsForRefactor"
-   (append `(:refactor ,refactor :action ,action :file ,tide-buffer-file-name)
+   (append `(:refactor ,refactor :action ,action :file ,(tide-buffer-file-name))
            (tide-location-or-range))))
 
 (defun tide-command:getApplicableRefactors ()
   (tide-send-command-sync
    "getApplicableRefactors"
-   (append `(:file ,tide-buffer-file-name) (tide-location-or-range))))
+   (append `(:file ,(tide-buffer-file-name)) (tide-location-or-range))))
 
 (defun tide-get-refactor-description (refactor)
   (plist-get refactor :description))
@@ -1139,7 +1149,7 @@ Noise can be anything like braces, reserved keywords, etc."
 
 (defun tide-command:completions (prefix cb)
   (let* ((file-location
-          `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(- (tide-current-offset) (length prefix)))))
+          `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(- (tide-current-offset) (length prefix)))))
     (when (not (tide-member-completion-p prefix))
       (setq file-location (plist-put file-location :prefix prefix)))
     (tide-send-command
@@ -1261,7 +1271,7 @@ Noise can be anything like braces, reserved keywords, etc."
 (defun tide-command:references ()
   (tide-send-command-sync
    "references"
-   `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
+   `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
 
 (defun tide-annotate-line (reference line-text)
   (let ((start (1- (tide-plist-get reference :start :offset)))
@@ -1374,7 +1384,7 @@ number."
       node)))
 
 (defun tide-command:navbar ()
-  (tide-send-command-sync "navtree" `(:file ,tide-buffer-file-name)))
+  (tide-send-command-sync "navtree" `(:file ,(tide-buffer-file-name))))
 
 (defun tide-imenu-index ()
   (let ((response (tide-command:navbar)))
@@ -1387,7 +1397,7 @@ number."
 ;;; Rename
 
 (defun tide-command:rename ()
-  (tide-send-command-sync "rename" `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
+  (tide-send-command-sync "rename" `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset))))
 
 (defun tide-rename-symbol-at-location (location new-symbol)
   (let ((file (plist-get location :file)))
@@ -1431,7 +1441,7 @@ number."
                (locs (tide-plist-get response :body :locs))
                (count 0))
           (cl-flet ((current-file-p (loc)
-                                    (file-equal-p (expand-file-name tide-buffer-file-name)
+                                    (file-equal-p (expand-file-name (tide-buffer-file-name))
                                                   (plist-get loc :file))))
 
             ;; Saving current file will trigger a compilation
@@ -1496,7 +1506,7 @@ code-analysis."
 (defun tide-format-region (start end)
   (let ((response (tide-send-command-sync
                    "format"
-                   `(:file ,tide-buffer-file-name
+                   `(:file ,(tide-buffer-file-name)
                            :line ,(tide-line-number-at-pos start)
                            :offset ,(tide-offset start)
                            :endLine ,(tide-line-number-at-pos end)
@@ -1520,16 +1530,7 @@ code-analysis."
     map))
 
 (defun tide-configure-buffer ()
-  ;; `buffer-file-name' will be empty for indirect buffers, so we'll use the
-  ;; name of the parrent buffer instead. This probably breaks when there are
-  ;; multiple indirect buffers.
-  (setq tide-buffer-file-name (or (and (overlayp edit-indirect--overlay)
-                                       (buffer-file-name (overlay-buffer edit-indirect--overlay)))
-                                  (and (overlayp org-src--overlay)
-                                       (buffer-file-name (overlay-buffer org-src--overlay)))
-                                  buffer-file-name
-                                  (buffer-file-name (buffer-base-buffer)))
-        tide-active-buffer-file-name tide-buffer-file-name)
+  (setq tide-active-buffer-file-name (tide-buffer-file-name))
 
   (tide-command:openfile)
   (tide-command:configure))
@@ -1550,7 +1551,7 @@ code-analysis."
   ;; cause problems in files with lots of small blocks of TypeScript. In that
   ;; case we should either add an ignore list or don't do anything at all when
   ;; there are more than a certain amount of snippets.
-  (unless (stringp tide-buffer-file-name)
+  (unless (stringp buffer-file-name)
     (setq tide-require-manual-sync t))
 
   (tide-start-server-if-required)
@@ -1574,7 +1575,7 @@ code-analysis."
          (when (string-prefix-p "/dev/null/inferredProject"
                                 (tide-plist-get response :body :configFileName))
            (message (format "'%s' is not part of a project, add it to the files array in tsconfig.json"
-                            tide-buffer-file-name))))))))
+                            (tide-buffer-file-name)))))))))
 
 ;;;###autoload
 (define-minor-mode tide-mode
@@ -1619,7 +1620,7 @@ code-analysis."
                         (funcall cb `(:body (,result) :success t)))))))
       (tide-send-command
        "syntacticDiagnosticsSync"
-       `(:file ,tide-buffer-file-name)
+       `(:file ,(tide-buffer-file-name))
        (lambda (response)
          (if (tide-response-success-p response)
              (setq result (plist-put result :syntaxDiag (plist-get response :body)))
@@ -1627,7 +1628,7 @@ code-analysis."
          (resolve)))
       (tide-send-command
        "semanticDiagnosticsSync"
-       `(:file ,tide-buffer-file-name)
+       `(:file ,(tide-buffer-file-name))
        (lambda (response)
          (if (tide-response-success-p response)
              (setq result (plist-put result :semanticDiag (plist-get response :body)))
@@ -1718,7 +1719,7 @@ code-analysis."
 (defun tide-command:geterrForProject ()
   (tide-send-command
    "geterrForProject"
-   `(:file ,tide-buffer-file-name :delay 0)))
+   `(:file ,(tide-buffer-file-name) :delay 0)))
 
 (defun tide-project-errors-buffer-name ()
   (format "*%s-errors*" (tide-project-name)))
@@ -1843,7 +1844,7 @@ code-analysis."
 (defun tide-command:documentHighlights (cb)
   (tide-send-command
    "documentHighlights"
-   `(:file ,tide-buffer-file-name :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset) :filesToSearch (,tide-buffer-file-name))
+   `(:file ,(tide-buffer-file-name) :line ,(tide-line-number-at-pos) :offset ,(tide-current-offset) :filesToSearch (,(tide-buffer-file-name)))
    cb))
 
 (defface tide-hl-identifier-face
@@ -1958,7 +1959,7 @@ timeout."
 ;;; Compile On Save
 
 (defun tide-command:compileOnSaveEmitFile ()
-  (tide-send-command "compileOnSaveEmitFile" `(:file ,tide-buffer-file-name)))
+  (tide-send-command "compileOnSaveEmitFile" `(:file ,(tide-buffer-file-name))))
 
 (defun tide-compile-file ()
   "Compiles the current file"
