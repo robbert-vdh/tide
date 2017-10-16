@@ -199,9 +199,9 @@ above."
   "Returns either the path to the currently open file. This is
   needed to support indirect buffers, as they don't set
   `buffer-file-name' correctly."
-  (or (and (overlayp edit-indirect--overlay)
+  (or (and (bound-and-true-p edit-indirect--overlay)
            (buffer-file-name (overlay-buffer edit-indirect--overlay)))
-      (and (overlayp org-src--overlay)
+      (and (bound-and-true-p org-src--overlay)
            (buffer-file-name (overlay-buffer org-src--overlay)))
       buffer-file-name
       (buffer-file-name (buffer-base-buffer))))
