@@ -262,6 +262,14 @@ ones and overrule settings in the other lists."
         (setq rtn (plist-put rtn p v))))
     rtn))
 
+(defun tide-get-file-buffer (file)
+  "Returns a buffer associated with a file. This will return the
+  current buffer if it matches `file'. This way we can support
+  temporary and indirect buffers."
+  (if (equal file (tide-buffer-file-name))
+      (current-buffer)
+    (find-file-noselect file)))
+
 (defun tide-response-success-p (response)
   (and response (equal (plist-get response :success) t)))
 
@@ -704,8 +712,8 @@ implementations.  When invoked with a prefix arg, jump to the type definition."
     (unless no-marker
       (ring-insert find-tag-marker-ring (point-marker)))
     (if reuse-window
-        (pop-to-buffer (find-file-noselect file) '((display-buffer-reuse-window display-buffer-same-window)))
-      (pop-to-buffer (find-file-noselect file)))
+        (pop-to-buffer (tide-get-file-buffer file) '((display-buffer-reuse-window display-buffer-same-window)))
+      (pop-to-buffer (tide-get-file-buffer file)))
     (tide-move-to-location (plist-get filespan :start))))
 
 (defalias 'tide-jump-back 'pop-tag-mark)
@@ -718,7 +726,7 @@ implementations.  When invoked with a prefix arg, jump to the type definition."
 (defun tide-jump-to-implementation-format-item (item)
   (let* ((file-name (plist-get item :file))
          (line (save-excursion
-                 (with-current-buffer (find-file-noselect file-name)
+                 (with-current-buffer (tide-get-file-buffer file-name)
                    (tide-move-to-location (plist-get item :start))
                    (replace-regexp-in-string "\n" "" (thing-at-point 'line)))))
          (file-pos (concat
@@ -972,10 +980,15 @@ Noise can be anything like braces, reserved keywords, etc."
 (defun tide-apply-code-edits (file-code-edits)
   (save-excursion
     (dolist (file-code-edit file-code-edits)
-      (with-current-buffer (find-file-noselect (plist-get file-code-edit :fileName))
-        (tide-format-regions (tide-apply-edits (plist-get file-code-edit :textChanges)))
-        (basic-save-buffer)
-        (run-hooks 'tide-post-code-edit-hook)))))
+      (let ((file (plist-get file-code-edit :fileName)))
+        (with-current-buffer (tide-get-file-buffer file)
+          (tide-format-regions (tide-apply-edits (plist-get file-code-edit :textChanges)))
+          ;; Saving won't work if the current buffer is temporary or an indirect
+          ;; buffer
+          (when (equal buffer-file-name file)
+            (basic-save-buffer))
+          (basic-save-buffer)
+          (run-hooks 'tide-post-code-edit-hook))))))
 
 (defun tide-get-flycheck-errors-ids-at-point ()
   (-map #'flycheck-error-id (flycheck-overlay-errors-at (point))))
@@ -1047,7 +1060,7 @@ Noise can be anything like braces, reserved keywords, etc."
       (deactivate-mark)
       (tide-apply-code-edits (tide-plist-get response :body :edits))
       (-when-let (rename-location (tide-plist-get response :body :renameLocation))
-        (with-current-buffer (find-file-noselect (tide-plist-get response :body :renameFilename))
+        (with-current-buffer (tide-get-file-buffer (tide-plist-get response :body :renameFilename))
           (tide-move-to-location rename-location)
           (when (tide-can-rename-symbol-p)
             (tide-rename-symbol)))))))
@@ -1402,7 +1415,7 @@ number."
 (defun tide-rename-symbol-at-location (location new-symbol)
   (let ((file (plist-get location :file)))
     (save-excursion
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (tide-get-file-buffer file)
         (-each
             (-map (lambda (filespan)
                     (tide-move-to-location (plist-get filespan :start))
@@ -1414,7 +1427,10 @@ number."
               (goto-char marker)
               (delete-char (- (tide-plist-get filespan :end :offset) (tide-plist-get filespan :start :offset)))
               (insert new-symbol))))
-        (basic-save-buffer)
+        ;; Saving won't work if the current buffer is temporary or an indirect
+        ;; buffer
+        (when (equal buffer-file-name file)
+          (basic-save-buffer))
         (length (plist-get location :locs))))))
 
 (defun tide-read-new-symbol (old-symbol)
